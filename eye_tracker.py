@@ -6,6 +6,9 @@ import dlib
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
 
+eye_movement_count = 0  # Stores eyeball movement count
+looking_outside = False  # Flag to track when user is looking outside
+
 def detect_pupil(eye_points, frame):
     """Detects the pupil by finding the darkest region in the eye."""
     x_min, y_min = np.min(eye_points, axis=0)
@@ -22,8 +25,26 @@ def detect_pupil(eye_points, frame):
         return cx, cy, (x_min, y_min, x_max, y_max)
     return None, None, (x_min, y_min, x_max, y_max)
 
+def check_looking_direction(pupil_x, eye_bounds):
+    """Detects if the pupil is moving left or right inside the eye."""
+    x_min, _, x_max, _ = eye_bounds
+    eye_width = x_max - x_min
+    left_threshold = x_min + eye_width * 0.3
+    right_threshold = x_min + eye_width * 0.7
+
+    if pupil_x is None:
+        return None  # If eye is closed, return None
+
+    if pupil_x < left_threshold:
+        return "Looking Left"
+    elif pupil_x > right_threshold:
+        return "Looking Right"
+    return "Looking Center"
+
 def track_pupil(frame):
-    """Tracks eyes and detects if the person looks away."""
+    """Tracks eyes and detects if the person looks away or moves eyeballs left/right."""
+    global eye_movement_count, looking_outside
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = detector(gray)
 
@@ -46,20 +67,26 @@ def track_pupil(frame):
         if pupil_r_x and pupil_r_y:
             cv2.circle(frame, (pupil_r_x, pupil_r_y), 3, (0, 0, 255), -1)
 
-        # **Cheating Detection - Looking Outside the Screen**
-        def check_looking_away(pupil_x, pupil_y, eye_bounds):
-            """Detects if the pupil moves too far left, right, up, or down."""
-            x_min, y_min, x_max, y_max = eye_bounds
-            margin = 6
-            if pupil_x and pupil_y:
-                if pupil_x < x_min + margin or pupil_x > x_max - margin:  # Looking extreme left or right
-                    return True
-                if pupil_y < y_min + margin or pupil_y > y_max - margin:  # Looking extreme up or down
-                    return True
-            return False
+        # **Eyeball Movement Detection**
+        left_eye_direction = check_looking_direction(pupil_l_x, left_eye_bounds)
+        right_eye_direction = check_looking_direction(pupil_r_x, right_eye_bounds)
 
-        if check_looking_away(pupil_l_x, pupil_l_y, left_eye_bounds) or check_looking_away(pupil_r_x, pupil_r_y, right_eye_bounds):
-            # print("⚠️ Looking Outside Detected! ⚠️")
+        if left_eye_direction or right_eye_direction:
+            print(f"Left Eye: {left_eye_direction} | Right Eye: {right_eye_direction}")
+
+        # **Cheating Detection - Looking Outside the Screen**
+        if left_eye_direction == "Looking Left" and right_eye_direction == "Looking Left":
+            looking_outside = True
             cv2.putText(frame, "Looking Outside!", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        if left_eye_direction == "Looking Right" and right_eye_direction == "Looking Right":
+            looking_outside = True
+            cv2.putText(frame, "Looking Outside!", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        # **Count Eyeball Movements After Looking Outside**
+        if looking_outside and (left_eye_direction in ["Looking Left", "Looking Right"] or 
+                                right_eye_direction in ["Looking Left", "Looking Right"]):
+            eye_movement_count += 1
+            print(f"Eyeball Moved {eye_movement_count} Times After Looking Outside!")
 
     return frame
